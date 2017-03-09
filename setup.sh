@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 sudo apt install -y fuse libfuse-dev pkg-config python2.7
 curl -sL https://deb.nodesource.com/setup_7.x | sudo -E bash -
 sudo apt install -y nodejs
