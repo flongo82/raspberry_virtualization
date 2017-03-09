@@ -83,15 +83,15 @@ lxd --version
 lxc launch ubuntu:16.04 test1
 lxc launch ubuntu:16.04 test2
 
-UID_TEST1=`sudo ls -l /var/lib/lxd/containers/test1/rootfs/ | grep root | awk '{}{print $3}{}'`
-UID_TEST2=`sudo ls -l /var/lib/lxd/containers/test2/rootfs/ | grep root | awk '{}{print $3}{}'`
+eval UID_TEST1=`sudo ls -l /var/lib/lxd/containers/test1/rootfs/ | grep root | awk '{}{print $3}{}'`
+eval UID_TEST2=`sudo ls -l /var/lib/lxd/containers/test2/rootfs/ | grep root | awk '{}{print $3}{}'`
 
 lxc exec test1 -- addgroup gpio
 lxc exec test1 -- usermod -a -G gpio ubuntu
-GID_TEST1=$(($UID_TEST1 + `lxc exec test1 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
+eval GID_TEST1=$(($UID_TEST1 + `lxc exec test1 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
 lxc exec test2 -- addgroup gpio
 lxc exec test2 -- usermod -a -G gpio ubuntu
-GID_TEST2=$(($UID_TEST2 + `lxc exec test2 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
+eval GID_TEST2=$(($UID_TEST2 + `lxc exec test2 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
 
 sudo mkdir -p /gpio_mnt/test1
 sudo mkdir -p /gpio_mnt/test2
