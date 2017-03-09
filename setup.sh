@@ -56,4 +56,4 @@ fi \\
 '", SYMLINK+="serial%c"
 EOF
 
-echo "Setup complete. Please, reboot!"
+echo "Setup completed. Please, reboot!"
