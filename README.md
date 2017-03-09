@@ -35,8 +35,9 @@ sudo add-apt-repository -y  ppa:ubuntu-lxc/lxd-stable
 sudo apt-get update
 sudo apt-get install -y lxd lxd-tools criu cgmanager
 sudo apt-get install -y zfs
-sudo lxd init
 lxd --version
+sudo reboot
+sudo lxd init
 ```
 
 ###Configure the system to allow gpio folder to be accessible from ubuntu user
