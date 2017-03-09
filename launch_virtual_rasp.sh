@@ -5,7 +5,7 @@ if [ "$#" -ne 1 ]; then
     exit;
 fi
 
-$name = $1
+name=$1
 
 lxc launch ubuntu:16.04 $name
 
