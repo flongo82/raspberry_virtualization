@@ -15,9 +15,8 @@ wget https://raw.githubusercontent.com/flongo82/node-folder-mirroring/master/nod
 
 sudo add-apt-repository -y ppa:ubuntu-lxc/lxd-stable
 sudo apt-get update
-sudo apt-get install -y lxd criu cgmanager
+sudo apt-get install -y lxd lxd-tools criu cgmanager
 sudo apt-get install -y zfs
-sudo lxd init
 lxd --version
 
 sudo addgroup gpio
@@ -57,4 +56,4 @@ fi \\
 '", SYMLINK+="serial%c"
 EOF
 
-echo "Setup completed. Please, reboot!"
+echo "Setup completed. Please, reboot and then launch 'sudo lxd init'."
