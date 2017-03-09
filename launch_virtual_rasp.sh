@@ -6,14 +6,15 @@ if [ "$#" -ne 1 ]; then
 fi
 
 name=$1
+echo "Creating virtual rasp "$name"!"
 
 lxc launch ubuntu:16.04 $name
 
-UID_"$name"=`sudo ls -l /var/lib/lxd/containers/"$name"/rootfs/ | grep root | awk '{}{print $3}{}'`
+eval UID_"$name"=`sudo ls -l /var/lib/lxd/containers/"$name"/rootfs/ | grep root | awk '{}{print $3}{}'`
 
 lxc exec "$name" -- addgroup gpio
 lxc exec "$name" -- usermod -a -G gpio ubuntu
-GID_"$name"=$(($UID_"$name" + `lxc exec "$name" -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
+eval GID_"$name"=$(($UID_"$name" + `lxc exec "$name" -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
 
 sudo mkdir -p /gpio_mnt/"$name"
 sudo chmod 777 -R /gpio_mnt/
