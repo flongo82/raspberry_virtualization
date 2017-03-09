@@ -8,15 +8,15 @@ This is a first version of Raspberry Pi virtualization: full pass-through of GPI
 ###Upgrade the system
 ```
 sudo apt update
-sudo apt upgrade
+sudo apt upgrade -y
 sudo reboot
 ```
 
 ###Install dependencies
 ```
-sudo apt install fuse libfuse-dev pkg-config python2.7
+sudo apt install -y fuse libfuse-dev pkg-config python2.7
 curl -sL https://deb.nodesource.com/setup_7.x | sudo -E bash -
-sudo apt install nodejs
+sudo apt install -y nodejs
 ```
 ###Create a folder for testing and setup the Node.js dependencies
 ```
@@ -71,10 +71,10 @@ sudo reboot
 
 ###Install and configure LXD
 ```
-sudo add-apt-repository ppa:ubuntu-lxc/lxd-stable
+sudo add-apt-repository -y  ppa:ubuntu-lxc/lxd-stable
 sudo apt-get update
-sudo apt-get install lxd criu cgmanager
-sudo apt-get install zfsutils-linux
+sudo apt-get install -y lxd criu cgmanager
+sudo apt-get install -y zfsutils-linux
 sudo lxd init
 lxd --version
 ```
