@@ -1,9 +1,9 @@
 #!/bin/bash
 
 
-sudo apt install fuse libfuse-dev pkg-config python2.7
+sudo apt install -y fuse libfuse-dev pkg-config python2.7
 curl -sL https://deb.nodesource.com/setup_7.x | sudo -E bash -
-sudo apt install nodejs
+sudo apt install -y nodejs
 
 mkdir /home/ubuntu/test_gpio_mirroring
 cd /home/ubuntu/test_gpio_mirroring
@@ -12,10 +12,10 @@ npm install fuse-bindings fs mknod path minimist
 npm install https://github.com/PlayNetwork/node-statvfs/tarball/v3.0.0
 wget https://raw.githubusercontent.com/flongo82/node-folder-mirroring/master/node-folder-mirroring.js
 
-sudo add-apt-repository ppa:ubuntu-lxc/lxd-stable
+sudo add-apt-repository -y ppa:ubuntu-lxc/lxd-stable
 sudo apt-get update
-sudo apt-get install lxd criu cgmanager
-sudo apt-get install zfsutils-linux
+sudo apt-get install -y lxd criu cgmanager
+sudo apt-get install -y zfsutils-linux
 sudo lxd init
 lxd --version
 
