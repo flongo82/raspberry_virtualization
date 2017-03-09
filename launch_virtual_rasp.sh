@@ -29,7 +29,7 @@ lxc exec "$name" -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio
 lxc config device add "$name" gpio disk source=/gpio_mnt/"$name"/sys/class/gpio path=/gpio_mnt/sys/class/gpio
 lxc config device add "$name" devices disk source=/gpio_mnt/"$name"/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio
 
-cd test_gpio_mirroring/
+cd /home/ubuntu/test_gpio_mirroring/
 sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/"$name"/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_"$name" -o gid=$GID_"$name" -o allow_other &> log_devices_"$name" &
 sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/"$name"/sys/class/gpio -o uid=$UID_"$name" -o gid=$GID_"$name" -o allow_other &> log_gpio_"$name" &
 
