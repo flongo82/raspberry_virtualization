@@ -1,5 +1,5 @@
-# raspberry_virtualization
-An approach to create multiple virtual Raspberry Pis on a single physical one.
+# Raspberry Pi Virtualization
+An approach to create multiple virtual Raspberry Pis on a single physical one through the use of LXD and FUSE. The virtual Raspberry Pis need to have access to the GPIO pseudo-filesystem. Of course, priviledged LXD containers could directly access the filesystem without the need of FUSE. However, being able to mediate access to GPIO pins is of great interest in Internet of Things scenarios. 
 
 This is a first version of Raspberry Pi virtualization: full pass-through of GPIO folder. It has been tested on a Raspberry Pi 2 with Ubuntu 16.04 LTS downloaded from https://wiki.ubuntu.com/ARM/RaspberryPi.
 
