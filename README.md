@@ -78,48 +78,34 @@ sudo apt-get install -y zfsutils-linux
 sudo lxd init
 lxd --version
 ```
-###Launch two virtual Raspberry Pis
+###Launch a virtual Raspberry Pi
 ```
 lxc launch ubuntu:16.04 test1
-lxc launch ubuntu:16.04 test2
 
-eval UID_TEST1=`sudo ls -l /var/lib/lxd/containers/test1/rootfs/ | grep root | awk '{}{print $3}{}'`
-eval UID_TEST2=`sudo ls -l /var/lib/lxd/containers/test2/rootfs/ | grep root | awk '{}{print $3}{}'`
+MYUID=`sudo ls -l /var/lib/lxd/containers/test1/rootfs/ | grep root | awk '{}{print $3}{}'`
 
 lxc exec test1 -- addgroup gpio
 lxc exec test1 -- usermod -a -G gpio ubuntu
-eval GID_TEST1=$(($UID_TEST1 + `lxc exec test1 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
-lxc exec test2 -- addgroup gpio
-lxc exec test2 -- usermod -a -G gpio ubuntu
-eval GID_TEST2=$(($UID_TEST2 + `lxc exec test2 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
+MYGID=$(($MYUID + `lxc exec test1 -- sed -nr "s/^gpio:x:([0-9]+):.*/\1/p" /etc/group`))
 
 sudo mkdir -p /gpio_mnt/test1
-sudo mkdir -p /gpio_mnt/test2
 sudo chmod 777 -R /gpio_mnt/
 
 sudo mkdir -p /gpio_mnt/test1/sys/devices/platform/soc/3f200000.gpio
 sudo mkdir -p /gpio_mnt/test1/sys/class/gpio
-sudo chown "$UID_TEST1"."$GID_TEST1" -R /gpio_mnt/test1/sys/
-sudo mkdir -p /gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio
-sudo mkdir -p /gpio_mnt/test2/sys/class/gpio
-sudo chown "$UID_TEST2"."$GID_TEST2" -R /gpio_mnt/test2/sys/
+sudo chown "$MYUID"."$MYGID" -R /gpio_mnt/test1/sys/
 
 lxc exec test1 -- mkdir -p /gpio_mnt/sys/class/gpio
 lxc exec test1 -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio
-lxc exec test2 -- mkdir -p /gpio_mnt/sys/class/gpio
-lxc exec test2 -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio
 
 lxc config device add test1 gpio disk source=/gpio_mnt/test1/sys/class/gpio path=/gpio_mnt/sys/class/gpio
 lxc config device add test1 devices disk source=/gpio_mnt/test1/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio
-lxc config device add test2 gpio disk source=/gpio_mnt/test2/sys/class/gpio path=/gpio_mnt/sys/class/gpio
-lxc config device add test2 devices disk source=/gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio
 
 cd /home/ubuntu/test_gpio_mirroring/
-sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test1/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_TEST1 -o gid=$GID_TEST1 -o allow_other &> log_devices_test1 &
-sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test1/sys/class/gpio -o uid=$UID_TEST1 -o gid=$GID_TEST1 -o allow_other &> log_gpio_test1 &
-sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_TEST2 -o gid=$GID_TEST2 -o allow_other &> log_devices_test2 &
-sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test2/sys/class/gpio -o uid=$UID_TEST2 -o gid=$GID_TEST2 -o allow_other &> log_gpio_test2 &
+sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test1/sys/devices/platform/soc/3f200000.gpio -o uid=$MYUID -o gid=$MYGID -o allow_other &> log_devices_test1 &
+sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test1/sys/class/gpio -o uid=$MYUID -o gid=$MYGID -o allow_other &> log_gpio_test1 &
 ```
+
 ##Current issues and future features
 * Understand if it is possible to mount the mirrored GPIO pseudo-filesystem under the /sys folder in a virtual rasp;
 * Forward hardware interrupt to the virtual GPIO pseudo-filesystem, i.e., implement poll() syscall on top of FUSE;
