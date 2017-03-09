@@ -8,7 +8,7 @@ This is a first version of Raspberry Pi virtualization: full pass-through of GPI
 ```
 sudo apt update
 sudo apt upgrade -y
-echo "127.0.0.1" >> /etc/hosts
+sudo sh -c "echo 127.0.0.1 >> /etc/hosts"
 sudo reboot
 ```
 
