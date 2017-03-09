@@ -1,6 +1,8 @@
 # Raspberry Pi Virtualization
 An approach to create multiple virtual Raspberry Pis on a single physical one through the use of LXD and FUSE. The virtual Raspberry Pis need to have access to the GPIO pseudo-filesystem. Of course, priviledged LXD containers could directly access the filesystem without the need of FUSE. However, being able to mediate access to GPIO pins is of great interest in Internet of Things and Fog/Edge computing scenarios. 
 
+
+## HowTo
 This is a first version of Raspberry Pi virtualization: full pass-through of GPIO folder. It has been tested on a Raspberry Pi 2 with Ubuntu 16.04 LTS downloaded from https://wiki.ubuntu.com/ARM/RaspberryPi.
 
 ###Upgrade the system
@@ -118,3 +120,7 @@ sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test1/sys/class/gpi
 sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_TEST2 -o gid=$GID_TEST2 -o allow_other &> log_devices_test2 &
 sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test2/sys/class/gpio -o uid=$UID_TEST2 -o gid=$GID_TEST2 -o allow_other &> log_gpio_test2 &
 ```
+##Current issues and future features
+* Understand if it is possible to mount the mirrored GPIO pseudo-filesystem under the /sys folder in a virtual rasp;
+* Forward hardware interrupt to the virtual GPIO pseudo-filesystem, i.e., implement poll() syscall on top of FUSE;
+* Design a mechanism to map physical pins with virtual pins in terms of naming, filtering, and so on. 
