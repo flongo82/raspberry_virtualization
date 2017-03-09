@@ -1,7 +1,6 @@
 # Raspberry Pi Virtualization
 An approach to create multiple virtual Raspberry Pis on a single physical one through the use of LXD and FUSE. The virtual Raspberry Pis need to have access to the GPIO pseudo-filesystem. Of course, priviledged LXD containers could directly access the filesystem without the need of FUSE. However, being able to mediate access to GPIO pins is of great interest in Internet of Things and Fog/Edge computing scenarios. 
 
-
 ## HowTo
 This is a first version of Raspberry Pi virtualization: full pass-through of GPIO folder. It has been tested on a Raspberry Pi 2 with Ubuntu 16.04 LTS downloaded from https://wiki.ubuntu.com/ARM/RaspberryPi.
 
@@ -9,6 +8,7 @@ This is a first version of Raspberry Pi virtualization: full pass-through of GPI
 ```
 sudo apt update
 sudo apt upgrade -y
+echo "127.0.0.1" >> /etc/hosts
 sudo reboot
 ```
 
@@ -18,6 +18,7 @@ sudo apt install -y fuse libfuse-dev pkg-config python2.7
 curl -sL https://deb.nodesource.com/setup_7.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
+
 ###Create a folder for testing and setup the Node.js dependencies
 ```
 mkdir /home/ubuntu/test_gpio_mirroring
@@ -26,6 +27,16 @@ npm config set python `which python2.7`
 npm install fuse-bindings fs mknod path minimist
 npm install https://github.com/PlayNetwork/node-statvfs/tarball/v3.0.0
 wget https://raw.githubusercontent.com/flongo82/node-folder-mirroring/master/node-folder-mirroring.js
+```
+
+###Install and configure LXD
+```
+sudo add-apt-repository -y  ppa:ubuntu-lxc/lxd-stable
+sudo apt-get update
+sudo apt-get install -y lxd criu cgmanager
+sudo apt-get install -y zfs
+sudo lxd init
+lxd --version
 ```
 
 ###Configure the system to allow gpio folder to be accessible from ubuntu user
@@ -69,15 +80,6 @@ EOF
 sudo reboot
 ```
 
-###Install and configure LXD
-```
-sudo add-apt-repository -y  ppa:ubuntu-lxc/lxd-stable
-sudo apt-get update
-sudo apt-get install -y lxd criu cgmanager
-sudo apt-get install -y zfsutils-linux
-sudo lxd init
-lxd --version
-```
 ###Launch a virtual Raspberry Pi
 ```
 lxc launch ubuntu:16.04 test1
