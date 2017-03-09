@@ -114,7 +114,7 @@ lxc config device add test1 devices disk source=/gpio_mnt/test1/sys/devices/plat
 lxc config device add test2 gpio disk source=/gpio_mnt/test2/sys/class/gpio path=/gpio_mnt/sys/class/gpio
 lxc config device add test2 devices disk source=/gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio
 
-cd test_gpio_mirroring/
+cd /home/ubuntu/test_gpio_mirroring/
 sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test1/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_TEST1 -o gid=$GID_TEST1 -o allow_other &> log_devices_test1 &
 sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test1/sys/class/gpio -o uid=$UID_TEST1 -o gid=$GID_TEST1 -o allow_other &> log_gpio_test1 &
 sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/test2/sys/devices/platform/soc/3f200000.gpio -o uid=$UID_TEST2 -o gid=$GID_TEST2 -o allow_other &> log_devices_test2 &
