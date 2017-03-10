@@ -10,7 +10,7 @@ echo "Destroying virtual rasp "$name"!"
 
 sudo kill -9 `cat /home/ubuntu/test_gpio_mirroring/log_devices_pid_"$name"`
 sudo kill -9 `cat /home/ubuntu/test_gpio_mirroring/log_gpio_pid_"$name"`
-sudo rm log_*_"$name"
+sudo rm /home/ubuntu/test_gpio_mirroring/log_*_"$name"
 
 sudo umount /gpio_mnt/"$name"/sys/devices/platform/soc/3f200000.gpio
 sudo umount /gpio_mnt/"$name"/sys/class/gpio
