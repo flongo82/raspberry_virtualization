@@ -31,5 +31,6 @@ lxc config device add "$name" devices disk source=/gpio_mnt/"$name"/sys/devices/
 
 cd /home/ubuntu/test_gpio_mirroring/
 sudo node node-folder-mirroring.js /sys/devices/platform/soc/3f200000.gpio /gpio_mnt/"$name"/sys/devices/platform/soc/3f200000.gpio -o uid=$MYUID -o gid=$MYGID -o allow_other &> log_devices_"$name" &
+echo $! > log_devices_pid_"$name"
 sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/"$name"/sys/class/gpio -o uid=$MYUID -o gid=$MYGID -o allow_other &> log_gpio_"$name" &
-
+echo $! > log_gpio_pid_"$name"
