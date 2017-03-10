@@ -16,7 +16,6 @@ wget https://raw.githubusercontent.com/flongo82/node-folder-mirroring/master/nod
 sudo add-apt-repository -y ppa:ubuntu-lxc/lxd-stable
 sudo apt-get update
 sudo apt-get install -y lxd lxd-tools criu cgmanager
-sudo apt-get install -y zfs
 lxd --version
 
 sudo addgroup gpio
