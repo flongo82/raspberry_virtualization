@@ -112,4 +112,5 @@ sudo node node-folder-mirroring.js /sys/class/gpio /gpio_mnt/test1/sys/class/gpi
 ##Current issues and future features
 * Understand if it is possible to mount the mirrored GPIO pseudo-filesystem under the /sys folder in a virtual rasp;
 * Forward hardware interrupt to the virtual GPIO pseudo-filesystem, i.e., implement poll() syscall on top of FUSE;
-* Design a mechanism to map physical pins with virtual pins in terms of naming, filtering, and so on. 
+* Design a mechanism to map physical pins with virtual pins in terms of naming, filtering, and so on;
+* Test the use of BTRFS on Raspberry Pi with ubuntu 16.04.
