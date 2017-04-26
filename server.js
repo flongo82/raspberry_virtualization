@@ -1,7 +1,8 @@
+// express is used to handle API routes
 var express = require('express');
 var bodyParser = require('body-parser');
+// via app variable we'll be using express module
 var app = express();
-var port = 8000;
 var fs = require('fs');
 var glob = require('glob');
 var ps = require('ps-node');
@@ -14,10 +15,14 @@ var mknod = require('mknod');
 var argv = require('minimist')(process.argv.slice(2));
 var fuse = require('fuse-bindings');
 var mkdirp = require('mkdirp');
+// using bodyParster.json in order to parse JSON strings
 app.use(bodyParser.json());
+// using bodyParser.urlenconded - without it express module won't be able to understand x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: true }))
+// specifying port number on which application will be listening
+var port = 8000;
 
-
+// function is full copy of node-folder-mirroring script, just omitted initial checks of arguments count ant correctness
 function folderMirroring (original_folder, mirror_folder, fuse_options) {
   if (!pt.isAbsolute(original_folder) || !pt.isAbsolute(mirror_folder)){
     console.log("Please use absolute paths!");
@@ -352,12 +357,23 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
    });
 }
 
-
+// route invoked by POST method to /container path (i.e. http://server:port/container)
+// req variable contains initial request came from client
+// res variable answer to be sent to client
 app.post('/container', function (req, res)  {
+  // req.body is client request's body, which is in JSON format. It's beign automatically parsed by bodyParser.json()
+  // req.body.name value is taken from parsed JSON and assigned to name variable in order to use it further
   name = req.body.name;
+  // All console.log lines are added in debugging purposes
   console.log ("Request body: ", req.body);
   console.log(`Trying to launch ${name} container...`);
+  // using try construction where it is possible in order to make code more reliable
   try {
+    // there are few libraries to manage lxc directly from node.js, but they do not allow to configure containers
+    // therefore we use exesSync, which invokes bash shell. 
+    // execSync is synchronous exec - difference is that execSync waits for command to finish, while exec does not
+    // if we use exec, all further code will be invoked before container actually starts
+    // by this line we launch container. Name is taken from client's JSON
     execSync(`lxc launch ubuntu:16.04 ${name}`);
   } catch (e) {
     console.log ("An error has occured while launching container: ", e.message);
@@ -365,38 +381,44 @@ app.post('/container', function (req, res)  {
     console.log (`Launched ${name} container`);
   }
 
+  // taking uid of file's owner using fs.statSync method
   uidstats = fs.statSync(`/var/lib/lxd/containers/${name}/rootfs/`);
   uid = uidstats["uid"];
   console.log ("UID: ", uid);
 
 
   try {
-    var nowhere = execSync(`lxc exec ${name} -- addgroup gpio`);
+    // Adding gpio group to container.
+    execSync(`lxc exec ${name} -- addgroup gpio`);
   } catch (e) {
     console.log ("An error has occured while adding gpio group: ", e.message);
   } finally {
     console.log (`Added gpio group in ${name} container `);
   }
   try {
-    var nowhere = execSync(`lxc exec ${name} -- usermod -a -G gpio ubuntu`);
+    // adding ubuntu user to gpio group in container
+    execSync(`lxc exec ${name} -- usermod -a -G gpio ubuntu`);
    } catch (e) {
     console.log ("An error has occured while adding ubuntu user to gpio group: ", e.message);
   } finally {
     console.log (`Added ubuntu user to gpio group in ${name} container`);
   }
-
+  // getting gpio group's ID in containter and suming it with rootfs folder's uid. It will be used further while calling folder mirroring function
   output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
   gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
   console.log ("GID: ", gid);
-  if (!fs.existsSync(`/gpio_mnt`)){
-    fs.mkdirSync(`/gpio_mnt`);
-  }
-
+  // checking if /gpio_mnt/${name} exists and if not - create it using mkdirp.sync
+  // standard fs.mkdirSync does not fit because there is no way to make folder recursively
   if (!fs.existsSync(`/gpio_mnt/${name}`)){
-    fs.mkdirSync(`/gpio_mnt/${name}`);
+    try {
+      mkdirp.sync(`/gpio_mnt/${name}`);
+    } catch (e) {
+      console.log ("Error: ", e.message);
+    }
   }
-  //fs.chmodSync does not perform recursive chmod, therefore using mkdirp library 
-  execSync(`chmod 777 /gpio_mnt/`); 
+  // fs.chmodSync does not perform recursive chmod, therefore using execSync + chmod with -R flag
+  execSync(`chmod 777 -R /gpio_mnt/`);
+  // creating folders using mkdirp.sync for pins mapping
   try {
     mkdirp.sync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`);
   } catch (e) {
@@ -407,50 +429,56 @@ app.post('/container', function (req, res)  {
    } catch (e) {
     console.log ("Error: ", e.message);
   }
-
-
-  var nowhere = execSync(`sudo chown ${uid}.${gid} -R /gpio_mnt/${name}/sys/`);
+  // there is no fs.chown with recursion - using execSync + chown -R
+  execSync(`chown ${uid}.${gid} -R /gpio_mnt/${name}/sys/`);
+  // creating folder in container, which will be mapped to parent's appropriate folder
   try {
-    var nowhere = execSync(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/class/gpio`);
+    execSync(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/class/gpio`);
   } catch (e) {
     console.log ("Error: ", e.message);
   }
+  // creating folder in container, which will be mapped to parent's appropriate folder
   try {
-    var nowhere = execSync(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio`);
+    execSync(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio`);
   } catch (e) {
     console.log ("Error: ", e.message);
   }
-
+  // mapping parent's folders to appropriate container's folders
   try {
-    var nowhere = execSync(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/class/gpio path=/gpio_mnt/sys/class/gpio`);
+    execSync(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/class/gpio path=/gpio_mnt/sys/class/gpio`);
   } catch (e) {
     console.log ("Error: ", e.message);
   }
+  // mapping parent's folders to appropriate container's folders
   try {
-    var nowhere = execSync(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`);
+    execSync(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`);
   } catch (e) {
     console.log ("Error: ", e.message);
   }
-
+  // calling functions to reflect changes between parent and container's folders using FUSE
   folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, `uid=${uid} gid=${gid} allow_other`);
   folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, `uid=${uid} gid=${gid} allow_other`);
-
+  // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "ok"
   res.send(`ok`);
 });
 
+// route invoked by DELETE method to /container path (i.e. http://server:port/container)
+// req variable contains initial request came from client
+// res variable answer to be sent to client
 app.delete('/container', function (req, res) {
+  // req.body is client request's body, which is in JSON format. It's beign automatically parsed by bodyParser.json()
+  // req.body.name value is taken from parsed JSON and assigned to name variable in order to use it further
   name = req.body.name;
+  // All console.log lines are added in debugging purposes
   console.log(name);
-
-//  path1 = `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`
-//  var mounted = mountutil.isMounted(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`,true);  
-//  console.log (mounted.mounted);
-//  if((mountutil.isMounted(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`,true)).mounted) {
-//    console.log (`Trying to unmount ${path1}...`);
+  // creating array with list of mounting points to unmount, in order to simplify code
   var mountpoints = [`/gpio_mnt/${req.body.name}/sys/devices/platform/soc/3f200000.gpio`,`/gpio_mnt/${req.body.name}/sys/class/gpio`];
+  // using forEach() method in order to go through all array elements and unmount them
   mountpoints.forEach (function(mountPath,i,mountpoints) {
     console.log (mountPath);
+    // using fuse.unmount(), which actually removes FUSE mounting
     fuse.unmount(mountPath, function (err) {
+      // this is callback function, which handles errors
       if (err) {
         console.log('filesystem at ' + mountPath + ' not unmounted', err)
       } else {
@@ -459,28 +487,11 @@ app.delete('/container', function (req, res) {
     });
   });
 
-//unmount devices
-   
-
-   
-//    try {
-//      execSync(`umount ${mountpoint}`)
-//    } catch (e) {
-//      console.log(`An error has occured during ${mountpoint} mountpoint removal: ${e.error}`);
-//    } finally {    
-//      console.log(`Successfully unmounted ${mountpoint} mountpoint`);
-//   }
-//       /*mountutil.umount(mountpoint, false, { "removeDir": true }, function(result) {
-//        if (result.error) {
-//          console.log('Error during ' + mountpoint + 'unmounting:'  + result.error);
-//        } else {
-//	  console.log(`successfully unmounted ${mountpoint}`);
-//        }
-//        });*/  
-//  });  
-
-  //remove lxc container devices
-  console.log("11");
+  // there are few libraries to manage lxc directly from node.js, but they do not allow to configure containers
+  // therefore we use exesSync, which invokes bash shell.
+  // execSync is synchronous exec - difference is that execSync waits for command to finish, while exec does not
+  // if we use exec, all further code will be invoked before container actually starts
+  // by these 2 try constructions we reconfigre container and remove gpio mountings. Name is taken from client's JSON
   try {
     execSync(`lxc config device remove ${name} gpio disk`)
   } catch (e) {
@@ -496,7 +507,7 @@ app.delete('/container', function (req, res) {
   } finally {
     console.log(`disk was removed from ${name}`);
   } 
-  //remove gpoi_mnt folder for container
+  //recursively remove gpoi_mnt folder. There is no method in fs to recursively remove, therefore using deleteFolderRecursice function
   var path = "/gpio_mnt/" + name;
   console.log(`removing ${path} folder...`);
   
@@ -515,16 +526,8 @@ app.delete('/container', function (req, res) {
       console.log(path + " deleted");
     }
   };
-  try {
-    execSync(`rm -rf /gpio_mnt/${name}`);
-  } catch (e) {
-     console.log(`An error has occured during /gpio_mnt/${name} folder removal: ${e.error}`);
-  } finally {
-    console.log(`/gpio_mnt/${name} folder was removed`);
-  }
 
-
-  //remove container
+  //remove container by bash
   console.log("Removing container...");
   try {
     execSync(`lxc delete --force ${name}`);
@@ -533,9 +536,11 @@ app.delete('/container', function (req, res) {
   } finally {
      console.log(`${name} was removed`);
   }
+  // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "ok"
   res.send("ok");
 });
 
+// app.listen is used to launch web server for API requests listening
 app.listen(port, () => {
   console.log('We are live on ' + port);
 });
