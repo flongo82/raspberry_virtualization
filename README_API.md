@@ -10,7 +10,7 @@ We assume that server.js script is located in /home/ubuntu/raspberry_virtualizat
 
 ```
 cd /home/ubuntu/raspberry_virtualization
-npm install nodemon express body-parser ps-node linux-mountutils wait.for mkdirp
+npm install nodemon express body-parser ps-node linux-mountutils mkdirp
 
 ```
 
