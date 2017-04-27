@@ -392,7 +392,8 @@ app.post('/container', function (req, res)  {
           console.log (`Added gpio group in ${name} container `);
         }
         // adding ubuntu user to gpio group in container
-        exec(`lxc exec ${name} -- usermod -a -G gpio ubuntu`, (error, stdout, stderr) => {
+        // without useradd ubuntu command, it keeps failing with error: ubuntu user does not exist. 
+        exec(`lxc exec ${name} -- useradd ubuntu && usermod -a -G gpio ubuntu`, (error, stdout, stderr) => { 
           if (error) {
             console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
           } else {
@@ -460,9 +461,10 @@ app.post('/container', function (req, res)  {
                       console.log (`Mounted /gpio_mnt/sys/class/gpio folder in ${name} container`);
                     }
                     // mapping parent's folders to appropriate container's folders
-                    exec(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
+                    exec(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
                       if (error) {
                         console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
+			console.error(`Error text: ${error}`);
                       } else {
                         console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
                       }
@@ -492,11 +494,17 @@ app.delete('/container', function (req, res) {
   name = req.body.name;
   // All console.log lines are added in debugging purposes
   console.log(name);
-  // creating array with list of mounting points to unmount, in order to simplify code
-  var mountpoints = [`/gpio_mnt/${req.body.name}/sys/devices/platform/soc/3f200000.gpio`,`/gpio_mnt/${req.body.name}/sys/class/gpio`];
-  // using forEach() method in order to go through all array elements and unmount them
-  mountpoints.forEach (function(mountPath,i,mountpoints) {
-    console.log (mountPath);
+  // using mountPath variable in order unify code with next callback
+  mountPath = `/gpio_mnt/${req.body.name}/sys/class/gpio`;
+   // using fuse.unmount(), which actually removes FUSE mounting
+  fuse.unmount(mountPath, function (err) {
+    // this is callback function, which handles errors
+    if (err) {
+      console.error('filesystem at ' + mountPath + ' not unmounted', err)
+    } else {
+      console.log('filesystem at ' + mountPath + ' unmounted')
+    }
+    mountPath = `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`;
     // using fuse.unmount(), which actually removes FUSE mounting
     fuse.unmount(mountPath, function (err) {
       // this is callback function, which handles errors
