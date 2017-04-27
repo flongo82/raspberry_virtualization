@@ -392,8 +392,9 @@ app.post('/container', function (req, res)  {
           console.log (`Added gpio group in ${name} container `);
         }
         // adding ubuntu user to gpio group in container
-        // without useradd ubuntu command, it keeps failing with error: ubuntu user does not exist. 
-        exec(`lxc exec ${name} -- useradd ubuntu && usermod -a -G gpio ubuntu`, (error, stdout, stderr) => { 
+        // without sleep 1, it keeps failing with error: ubuntu user does not exist. 
+        // This is due to the fact that the cloud-init script that creates the ubuntu user has not finished yet when you try to add the ubuntu user to the gpio group.
+        exec(`lxc exec ${name} -- sleep 1 && usermod -a -G gpio ubuntu`, (error, stdout, stderr) => { 
           if (error) {
             console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
           } else {
