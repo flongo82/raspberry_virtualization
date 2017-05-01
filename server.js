@@ -17,6 +17,9 @@ var fuse = require('fuse-bindings');
 var mkdirp = require('mkdirp');
 var wrench = require('wrench'),
 	util = require('util');
+
+var lxd = require("node-lxd");
+var client = lxd();
 // using bodyParster.json in order to parse JSON strings
 app.use(bodyParser.json());
 // using bodyParser.urlenconded - without it express module won't be able to understand x-www-form-urlencoded
@@ -384,7 +387,7 @@ app.post('/container', function (req, res)  {
     } else {
       console.log (`Launched ${name} container`);
       // go on if container launched successfully
-      // taking uid of file's owner using fs.statSync method
+      // taking uid of container's root using fs.statSync method
       uidstats = fs.statSync(`/var/lib/lxd/containers/${name}/rootfs/`);
       uid = uidstats["uid"];
       console.log ("UID: ", uid);
@@ -569,6 +572,46 @@ app.delete('/container', function (req, res) {
   // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "invoked"
   // answer comes immediately after receving API call 
   res.send("invoked");
+});
+
+// on start of server, checking for existence of running containers. If they exist, re-mount folders
+client.containers(function(err, containers) {
+  for (var i = 0; i < containers.length; i++) {
+    if((containers[i]._metadata.status) == 'Running') {
+      //Remounting
+      name = containers[i].name();
+      console.log (`${name} is running`);
+      // taking uid of container's root using fs.statSync method
+      uidstats = fs.statSync(`/var/lib/lxd/containers/${name}/rootfs/`);
+      uid = uidstats["uid"];
+      console.log ("UID: ", uid);
+      // getting gpio group's ID in containter and suming it with rootfs folder's uid. It will be used further while calling folder mirroring function
+      output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
+      gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
+      console.log ("GID: ", gid);
+
+      // using fuse.unmount(), which actually removes FUSE mounting
+      fuse.unmount(`/gpio_mnt/${name}/sys/class/gpio`, function (err) {
+        // this is callback function, which handles errors
+        if (err) {
+          console.error(`filesystem at /gpio_mnt/${name}/sys/class/gpio not unmounted due to error: ${err}`);
+        } else {
+          console.log(`filesystem at /gpio_mnt/${name}/sys/class/gpio has been unmounted`);
+        }
+        folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+      });
+      // using fuse.unmount(), which actually removes FUSE mounting
+      fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, function (err) {
+        // this is callback function, which handles errors<
+        if (err) {
+          console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio not unmounted due to error: ${err}`);
+        } else {
+          console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio has been unmounted`);
+        }
+        folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+      });
+    }
+  }
 });
 
 // app.listen is used to launch web server for API requests listening
