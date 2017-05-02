@@ -15,6 +15,11 @@ var mknod = require('mknod');
 var argv = require('minimist')(process.argv.slice(2));
 var fuse = require('fuse-bindings');
 var mkdirp = require('mkdirp');
+var wrench = require('wrench'),
+	util = require('util');
+
+var lxd = require("node-lxd");
+var client = lxd();
 // using bodyParster.json in order to parse JSON strings
 app.use(bodyParser.json());
 // using bodyParser.urlenconded - without it express module won't be able to understand x-www-form-urlencoded
@@ -273,6 +278,9 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
     
     var write_function = function(path, fd, buffer, length, position, cb){
         console.log('write(%s)', path);
+        if (path == "/export") {
+          console.log(buffer.toString());
+        } 
         fs.open(pt.join(original_folder, path), 'r+', function (err, int_fd) {
             if(err){
                 //console.log('error: ', err);
@@ -297,7 +305,8 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
                     }
                 });
             } 
-        });        
+        });
+      
 
     }
     
@@ -378,8 +387,7 @@ app.post('/container', function (req, res)  {
     } else {
       console.log (`Launched ${name} container`);
       // go on if container launched successfully
-
-      // taking uid of file's owner using fs.statSync method
+      // taking uid of container's root using fs.statSync method
       uidstats = fs.statSync(`/var/lib/lxd/containers/${name}/rootfs/`);
       uid = uidstats["uid"];
       console.log ("UID: ", uid);
@@ -388,94 +396,90 @@ app.post('/container', function (req, res)  {
       exec(`lxc exec ${name} -- addgroup gpio`, (error, stdout, stderr) => {
         if (error) {
           console.error(`An error has occured while adding gpio group: ${error}`);
-        } else {
-          console.log (`Added gpio group in ${name} container `);
+        } else { console.log (`Added gpio group in ${name} container `);
         }
-        // adding ubuntu user to gpio group in container
-        exec(`lxc exec ${name} -- usermod -a -G gpio ubuntu`, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
-          } else {
-            console.log (`Added ubuntu user to gpio group in ${name} container `);
-          }
-
-          // getting gpio group's ID in containter and suming it with rootfs folder's uid. It will be used further while calling folder mirroring function
-          output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
-          gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
-          console.log ("GID: ", gid);
-          // checking if /gpio_mnt/${name} exists and if not - create it using mkdirp.sync
-          // standard fs.mkdirSync does not fit because there is no way to make folder recursively
-          if (!fs.existsSync(`/gpio_mnt/${name}`)){
-            try {
-              mkdirp.sync(`/gpio_mnt/${name}`);
-            } catch (e) {
-              console.log ("Error: ", e.message);
-            }
-          }
-          // fs.chmod does not perform recursive chmod, therefore using exec + chmod with -R flag
-          exec(`chmod 777 -R /gpio_mnt/`, (error, stdout, stderr) => {
+        setTimeout(function (){ 
+          // without sleeping, it keeps failing with error: ubuntu user does not exist. 
+          // This is due to the fact that the cloud-init script that creates the ubuntu user has not finished yet when you try to add the ubuntu user to the gpio group.
+          // adding ubuntu user to gpio group in container
+          exec(`lxc exec ${name} -- usermod -a -G gpio ubuntu`, (error, stdout, stderr) => { 
             if (error) {
-              console.error(`An error has occured while performing chmod 777 -R /gpio_mnt/: ${error}`);
+               console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
             } else {
-              console.log (`Performed chmod 777 -R /gpio_mnt/ succesfully`);
+               console.log (`Added ubuntu user to gpio group in ${name} container `);
             }
-            // creating folders using mkdirp.sync for pins mapping
-            try {
-              mkdirp.sync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`);
-            } catch (e) {
-              console.log ("Error: ", e.message);
+          });
+        }, 15000);
+        // getting gpio group's ID in containter and suming it with rootfs folder's uid. It will be used further while calling folder mirroring function
+        output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
+        gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
+        console.log ("GID: ", gid);
+        // checking if /gpio_mnt/${name} exists and if not - create it using mkdirp.sync
+        // standard fs.mkdirSync does not fit because there is no way to make folder recursively
+        if (!fs.existsSync(`/gpio_mnt/${name}`)){
+	  try {
+	    mkdirp.sync(`/gpio_mnt/${name}`);
+	  } catch (e) {
+	    console.log ("Error: ", e.message);
+	  }
+	}
+        // fs.chmod does not perform recursive chmod, therefore using exec + chmod with -R flag
+        exec(`chmod 777 -R /gpio_mnt/`, (error, stdout, stderr) => {
+          if (error) console.error(`An error has occured while performing chmod 777 -R /gpio_mnt/: ${error}`);
+          else console.log (`Performed chmod 777 -R /gpio_mnt/ succesfully`);
+          // creating folders using mkdirp.sync for pins mapping
+          mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`,function (err) {
+            if (err) {
+               console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio folder: ${err.message}`);
+            } else {
+               console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio folder successfully`);
             }
-            try {
-              mkdirp.sync(`/gpio_mnt/${name}/sys/class/gpio`);
-            } catch (e) {
-              console.log ("Error: ", e.message);
-            }
-            // there is no fs.chown with recursion - using exec + chown -R
-            exec(`chown ${uid}.${gid} -R /gpio_mnt/${name}/sys/`, (error, stdout, stderr) => {
-              if (error) {
-                console.error(`An error has occured while performing chmod 777 -R /gpio_mnt/: ${error}`);
+            mkdirp(`/gpio_mnt/${name}/sys/class/gpio`, function (err) {
+              if (err) {
+                console.error(`An error has occured while creating /gpio_mnt/${name}/sys/class/gpio folder: ${err.message}`);
               } else {
-                console.log (`Performed chmod 777 -R /gpio_mnt/ succesfully`);
+                console.log (`Created /gpio_mnt/${name}/sys/class/gpio folder successfully`);
               }
+              // adding permissions to root&gpio
+              wrench.chownSyncRecursive(`/gpio_mnt/${name}/sys/`, uid, gid);
               // creating folder in container, which will be mapped to parent's appropriate folder
               exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/class/gpio`,(error, stdout, stderr) => {
                 if (error) {
                   console.error(`An error has occured while creating /gpio_mnt/sys/class/gpio folder in ${name} container`);
-                } else {
-                  console.log (`Created /gpio_mnt/sys/class/gpio folder in ${name} container`);
+  	        } else {
+                   console.log (`Created /gpio_mnt/sys/class/gpio folder in ${name} container`);
                 }
-
                 // creating folder in container, which will be mapped to parent's appropriate folder
                 exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
-                  if (error) {
+	          if (error) {
                     console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-                  } else {
-                    console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-                  }
+	          } else {
+                    console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} contaier`);
+	          }
                   // mapping parent's folders to appropriate container's folders
-                  exec(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/class/gpio path=/gpio_mnt/sys/class/gpio`, (error, stdout, stderr) => {
-                    if (error) {
+		  exec(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/class/gpio path=/gpio_mnt/sys/class/gpio`, (error, stdout, stderr) => {
+		    if (error) {
                       console.error(`An error has occured while mounting /gpio_mnt/sys/class/gpio folder in ${name} container`);
-                    } else {
+		    } else {
                       console.log (`Mounted /gpio_mnt/sys/class/gpio folder in ${name} container`);
-                    }
+		    } 
                     // mapping parent's folders to appropriate container's folders
-                    exec(`lxc config device add ${name} gpio disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
-                      if (error) {
-                        console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-                      } else {
+		    exec(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
+		      if (error) {
+                        console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container: ${error}`);
+		      } else {
                         console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-                      }
+		      }
                       // calling functions to reflect changes between parent and container's folders using FUSE
-                      folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, `uid=${uid} gid=${gid} allow_other`);
-                      folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, `uid=${uid} gid=${gid} allow_other`);
-                    });
+		      folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+		      folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+		    });
                   });
-                });
+		});
               });
             });
           });
-        });     
+        });
       });
     }
   });
@@ -492,11 +496,17 @@ app.delete('/container', function (req, res) {
   name = req.body.name;
   // All console.log lines are added in debugging purposes
   console.log(name);
-  // creating array with list of mounting points to unmount, in order to simplify code
-  var mountpoints = [`/gpio_mnt/${req.body.name}/sys/devices/platform/soc/3f200000.gpio`,`/gpio_mnt/${req.body.name}/sys/class/gpio`];
-  // using forEach() method in order to go through all array elements and unmount them
-  mountpoints.forEach (function(mountPath,i,mountpoints) {
-    console.log (mountPath);
+  // using mountPath variable in order unify code with next callback
+  mountPath = `/gpio_mnt/${req.body.name}/sys/class/gpio`;
+   // using fuse.unmount(), which actually removes FUSE mounting
+  fuse.unmount(mountPath, function (err) {
+    // this is callback function, which handles errors
+    if (err) {
+      console.error('filesystem at ' + mountPath + ' not unmounted', err)
+    } else {
+      console.log('filesystem at ' + mountPath + ' unmounted')
+    }
+    mountPath = `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`;
     // using fuse.unmount(), which actually removes FUSE mounting
     fuse.unmount(mountPath, function (err) {
       // this is callback function, which handles errors
@@ -562,6 +572,46 @@ app.delete('/container', function (req, res) {
   // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "invoked"
   // answer comes immediately after receving API call 
   res.send("invoked");
+});
+
+// on start of server, checking for existence of running containers. If they exist, re-mount folders
+client.containers(function(err, containers) {
+  for (var i = 0; i < containers.length; i++) {
+    if((containers[i]._metadata.status) == 'Running') {
+      //Remounting
+      name = containers[i].name();
+      console.log (`${name} is running`);
+      // taking uid of container's root using fs.statSync method
+      uidstats = fs.statSync(`/var/lib/lxd/containers/${name}/rootfs/`);
+      uid = uidstats["uid"];
+      console.log ("UID: ", uid);
+      // getting gpio group's ID in containter and suming it with rootfs folder's uid. It will be used further while calling folder mirroring function
+      output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
+      gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
+      console.log ("GID: ", gid);
+
+      // using fuse.unmount(), which actually removes FUSE mounting
+      fuse.unmount(`/gpio_mnt/${name}/sys/class/gpio`, function (err) {
+        // this is callback function, which handles errors
+        if (err) {
+          console.error(`filesystem at /gpio_mnt/${name}/sys/class/gpio not unmounted due to error: ${err}`);
+        } else {
+          console.log(`filesystem at /gpio_mnt/${name}/sys/class/gpio has been unmounted`);
+        }
+        folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+      });
+      // using fuse.unmount(), which actually removes FUSE mounting
+      fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, function (err) {
+        // this is callback function, which handles errors<
+        if (err) {
+          console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio not unmounted due to error: ${err}`);
+        } else {
+          console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio has been unmounted`);
+        }
+        folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+      });
+    }
+  }
 });
 
 // app.listen is used to launch web server for API requests listening
