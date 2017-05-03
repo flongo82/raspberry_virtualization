@@ -349,48 +349,48 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
             console.log("Mirrored folder: " + mirror_folder);
             // checking for input. If it's number from 0 to 100, go on  
             if (inputstring >=0 && inputstring <= 100) {
-              // check if pin is already exported
+              // check if pin is already exported if not - do it
               if (fs.existsSync(`/sys/class/gpio/gpio${inputstring}`)){
-                console.log (`pin ${inputstring} is exported already`);
+                console.log (`Pin ${inputstring} is exported already. Skipping export of physical pin`);
 	      } else {
                 // if its not exported yet, export it
                 gpio.export(inputstring, {
                   ready: function() {
-                    // create folder for exported pin
-                    mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`,function (err) {
-                      if (err) {
-                        console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder: ${err.message}`);
-                      } else {
-                        console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder successfully`);
-                      }
-                      // create folder for exported pin in container
-                      exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
-                        if (error) {
-                          console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
-                        } else {
-                          console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
-                        }
-
-                        // create device to mount folder to container
-                        exec(`lxc config device add ${name} pin${inputstring} disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
-                          if (error) {
-                            console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpiogpio/gpio${inputstring} folder in ${name} container: ${error}`);
-                          } else {
-                            console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
-                          }
-                          // start mirroring using fuse
-                          folderMirroring (`/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-                          //cb (null);
-                        });
-                      });
-                    });
                   }
                 });
               }
-          // if user tries to put something wrong to export folder
-          } else { 
-             console.log('user tried to perform unexpected action');
-          }
+              // create folder for pin
+              mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`,function (err) {
+                if (err) {
+                  console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder: ${err.message}`);
+                } else {
+                  console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder successfully`);
+                }
+                // create folder for exported pin in container
+                exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                  if (error) {
+                    console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                  } else {
+                    console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                  }
+
+                  // create device to mount folder to container
+                  exec(`lxc config device add ${name} pin${inputstring} disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                    if (error) {
+                      console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpiogpio/gpio${inputstring} folder in ${name} container: ${error}`);
+                    } else {
+                      console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                    }
+                    // start mirroring using fuse
+                    folderMirroring (`/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+                    //cb (null);
+                  });
+                });
+              });
+            // if user tries to put something wrong to export folder
+            } else { 
+               console.log('user tried to perform unexpected action');
+            }
         // if user tries to unexport
         } else if ((original_folder + path) == "/sys/class/gpio/unexport") {
           // return "ok"
@@ -435,10 +435,17 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
                       }
                       // remove folder from physical raspberry
                       deleteFolderRecursive (`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`);
-                      // unexport pin
-                      gpio.unexport(inputstring, {
-                        ready: function() {
-                          //cb (2);
+                      //find if any container has mounted this pin
+                      glob('/gpio_mnt/*/sys/devices/platform/soc/3f200000.gpio/gpio/gpio'+inputstring, function(err,files){
+                        //if no containers this this pin, proceed this unexporting it from physical rasp
+                        if(files.length == 0){
+                          // unexport pin
+                          gpio.unexport(inputstring, {
+                            ready: function() {
+                              console.log(`unexported pin ${inputstring}`)
+                              //cb (2);
+                            }
+                          });
                         }
                       });
                     });
