@@ -6,7 +6,6 @@ var app = express();
 var fs = require('fs');
 var glob = require('glob');
 var ps = require('ps-node');
-var mountutil = require('linux-mountutils');
 var exec = require('child_process').exec;
 var execSync = require('child_process').execSync;
 var pt = require('path');
@@ -20,12 +19,68 @@ var wrench = require('wrench'),
 
 var lxd = require("node-lxd");
 var client = lxd();
+var gpio = require("gpio");
 // using bodyParster.json in order to parse JSON strings
 app.use(bodyParser.json());
 // using bodyParser.urlenconded - without it express module won't be able to understand x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: true }))
 // specifying port number on which application will be listening
 var port = 8000;
+// this function is desired to simplify remounts during server initialization
+function folderRemount (folder, name, uid, gid) {
+  fuse.unmount(`/gpio_mnt/${name}${folder}`, function (err) {
+    // this is callback function, which handles errors
+    if (err) {
+      console.error(`filesystem at /gpio_mnt/${name}${folder} not unmounted due to error: ${err}`);
+    } else {
+      console.log(`filesystem at /gpio_mnt/${name}${folder} has been unmounted`);
+    }
+    folderMirroring (folder, `/gpio_mnt/${name}${folder}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+  });
+}
+
+// this function will be used later to unmount all fuse mount points of container
+function unmountAllFuse (name, callback) {
+  exec (`mount | grep -E "\/dev\/fuse on \/(gpio_mnt|var\/lib\/lxd\/devices)\/${name}\/"`, (error, stdout, stderr) => {
+    if (error) {
+      console.log (`No mounting points found for ${name} container ${error}`);    
+      callback();
+    } else {
+      reg = /(\/gpio_mnt.*|\/var\/lib\/lxd\/devices\/.*)\stype\sfuse/g;
+      while ((match = reg.exec(stdout.toString())) !== null) {
+        mountPoint = match[1];
+        console.log(`Found mounting point to unmount: ${mountPoint}`);
+        // using fuse.unmount(), which actually removes FUSE mounting
+        fuse.unmount(mountPoint, function (err) {
+          // this is callback function, which handles errors
+          if (err) {
+            console.error('filesystem at ' + mountPoint + ' not unmounted', err)
+          } else {
+            console.log('filesystem at ' + mountPoint + ' unmounted')
+          }
+        });
+      }
+      callback();
+    }
+  });
+}
+
+// this function will be used later to recursively remove folder
+function deleteFolderRecursive (path) {
+  if( fs.existsSync(path) ) {
+    fs.readdirSync(path).forEach(function(file,index){
+      var curPath = path + "/" + file;
+      if(fs.lstatSync(curPath).isDirectory()) { // recurse
+        deleteFolderRecursive(curPath);
+      } else { // delete file
+        fs.unlinkSync(curPath);
+        console.log(curPath + " deleted");
+      }
+    });
+  fs.rmdirSync(path);
+  console.log(path + " deleted");
+  }
+};
 
 // function is full copy of node-folder-mirroring script, just omitted initial checks of arguments count ant correctness
 function folderMirroring (original_folder, mirror_folder, fuse_options) {
@@ -278,36 +333,155 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
     
     var write_function = function(path, fd, buffer, length, position, cb){
         console.log('write(%s)', path);
-        if (path == "/export") {
-          console.log(buffer.toString());
-        } 
-        fs.open(pt.join(original_folder, path), 'r+', function (err, int_fd) {
-            if(err){
-                //console.log('error: ', err);
-                cb(fuse[err.code]);
-            }
-            else{
-                fs.write(int_fd, buffer, 0, length, position, function(err, written, int_buffer){
-                    if(err){
-                        //console.log('error: ', err);
-                        cb(fuse[err.code]);
-                    }
-                    else{
-                        fs.close(int_fd, function(err){
-                            if(err){
-                                //console.log('error:', err);
-                                cb(fuse[err.code]);
-                            }
-                            else{
-                                cb(written);
-                            }
-                        });
-                    }
+        // getting value that was pushed
+        inputstring = buffer.toString().trim();
+        // trying to convert value to integer
+        if (parseInt(inputstring)) {inputstring = parseInt(inputstring)}
+        // checking if export folder is target
+        if ((original_folder + path) == "/sys/class/gpio/export") {
+            // return "ok"
+            // correct return is not implemented yet
+            cb(2);
+            console.log("Export string: " + buffer.toString());
+            console.log("Original folder: " + original_folder);
+            //get container name from the path
+            name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
+            console.log("Mirrored folder: " + mirror_folder);
+            // checking for input. If it's number from 0 to 100, go on  
+            if (inputstring >=0 && inputstring <= 100) {
+              // check if pin is already exported if not - do it
+              if (fs.existsSync(`/sys/class/gpio/gpio${inputstring}`)){
+                console.log (`Pin ${inputstring} is exported already. Skipping export of physical pin`);
+	      } else {
+                // if its not exported yet, export it
+                gpio.export(inputstring, {
+                  ready: function() {
+                  }
                 });
-            } 
-        });
-      
+              }
+              // create folder for pin
+              mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`,function (err) {
+                if (err) {
+                  console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder: ${err.message}`);
+                } else {
+                  console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder successfully`);
+                }
+                // create folder for exported pin in container
+                exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                  if (error) {
+                    console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                  } else {
+                    console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                  }
 
+                  // create device to mount folder to container
+                  exec(`lxc config device add ${name} pin${inputstring} disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                    if (error) {
+                      console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpiogpio/gpio${inputstring} folder in ${name} container: ${error}`);
+                    } else {
+                      console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                    }
+                    // start mirroring using fuse
+                    folderMirroring (`/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+                    //cb (null);
+                  });
+                });
+              });
+            // if user tries to put something wrong to export folder
+            } else { 
+               console.log('user tried to perform unexpected action');
+            }
+        // if user tries to unexport
+        } else if ((original_folder + path) == "/sys/class/gpio/unexport") {
+          // return "ok"
+          // correct return is not implemented yet
+          cb(2);
+          console.log("Unexport string: " + buffer.toString());
+          console.log("Original folder: " + original_folder);
+          //get container name from the path
+          name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
+          console.log("Mirrored folder: " + mirror_folder);
+          // checking for input. If it's number from 0 to 100, go on
+          if (inputstring >=0 && inputstring <= 100) {
+            // check if pin exported to this container or not
+            exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} type fuse"`, (error, stdout, stderr) => {
+              if (error) {
+                // if not exported to this container - do not proceed
+                console.error(`pin ${inputstring} is not exported to ${name} container yet. Cannot proceed with unexporting`);
+              } else {
+                // proceed this unexporting if exported to this container
+                console.log (`Unexporting pin ${inputstring}...`);
+
+                fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, function (err) {
+                  // this is callback function, which handles errors
+                  if (err) {
+                    console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} not unmounted due to error: ${err}`);
+                  } else {
+                    console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} has been unmounted`);
+                  }
+                  // try removing device from container
+                  exec(`lxc config device remove ${name} pin${inputstring}`,(error, stdout, stderr) => {
+                    if (error) {
+                      console.error(`An error has occured while removing pin${inputstring} device in ${name} container: ${error}`);
+                    } else {
+                      console.log (`Removed ${inputstring} device from ${name} container`);
+                    }
+                    // remove folder from container
+                    exec(`lxc exec ${name} -- rm -R /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                      if (error) {
+                        console.error(`An error has occured while removing /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                      } else {
+                        console.log (`removed /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                      }
+                      // remove folder from physical raspberry
+                      deleteFolderRecursive (`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`);
+                      //find if any container has mounted this pin
+                      glob('/gpio_mnt/*/sys/devices/platform/soc/3f200000.gpio/gpio/gpio'+inputstring, function(err,files){
+                        //if no containers this this pin, proceed this unexporting it from physical rasp
+                        if(files.length == 0){
+                          // unexport pin
+                          gpio.unexport(inputstring, {
+                            ready: function() {
+                              console.log(`unexported pin ${inputstring}`)
+                              //cb (2);
+                            }
+                          });
+                        }
+                      });
+                    });
+                  });
+                });
+              }
+            });
+          }
+        } else {
+          fs.open(pt.join(original_folder, path), 'r+', function (err, int_fd) {
+              if(err){
+                  //console.log('error: ', err);
+                  cb(fuse[err.code]);
+              }
+              else{
+                  fs.write(int_fd, buffer, 0, length, position, function(err, written, int_buffer){
+                      if(err){
+                           //console.log('error: ', err);
+                         cb(fuse[err.code]);
+                      }
+                      else{
+                          fs.close(int_fd, function(err){
+                              if(err){
+                                  //console.log('error:', err);
+                                  cb(fuse[err.code]);
+                              }
+                              else{
+                                  console.log (written);
+                                  cb(written);
+                              }
+                          });
+                      }
+                  });
+              } 
+          });
+        }
     }
     
     var getxattr_function = function(path, name, buffer, length, offset, cb){
@@ -423,6 +597,7 @@ app.post('/container', function (req, res)  {
 	    console.log ("Error: ", e.message);
 	  }
 	}
+        
         // fs.chmod does not perform recursive chmod, therefore using exec + chmod with -R flag
         exec(`chmod 777 -R /gpio_mnt/`, (error, stdout, stderr) => {
           if (error) console.error(`An error has occured while performing chmod 777 -R /gpio_mnt/: ${error}`);
@@ -464,16 +639,16 @@ app.post('/container', function (req, res)  {
                       console.log (`Mounted /gpio_mnt/sys/class/gpio folder in ${name} container`);
 		    } 
                     // mapping parent's folders to appropriate container's folders
-		    exec(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
-		      if (error) {
-                        console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container: ${error}`);
-		      } else {
-                        console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-		      }
+		    //exec(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
+		      //if (error) {
+                      //  console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container: ${error}`);
+		      //} else {
+                      //  console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
+		      //}
                       // calling functions to reflect changes between parent and container's folders using FUSE
-		      folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-		      folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-		    });
+		      //folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+		    folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+		    //});
                   });
 		});
               });
@@ -496,26 +671,9 @@ app.delete('/container', function (req, res) {
   name = req.body.name;
   // All console.log lines are added in debugging purposes
   console.log(name);
-  // using mountPath variable in order unify code with next callback
-  mountPath = `/gpio_mnt/${req.body.name}/sys/class/gpio`;
-   // using fuse.unmount(), which actually removes FUSE mounting
-  fuse.unmount(mountPath, function (err) {
-    // this is callback function, which handles errors
-    if (err) {
-      console.error('filesystem at ' + mountPath + ' not unmounted', err)
-    } else {
-      console.log('filesystem at ' + mountPath + ' unmounted')
-    }
-    mountPath = `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`;
-    // using fuse.unmount(), which actually removes FUSE mounting
-    fuse.unmount(mountPath, function (err) {
-      // this is callback function, which handles errors
-      if (err) {
-        console.error('filesystem at ' + mountPath + ' not unmounted', err)
-      } else {
-        console.log('filesystem at ' + mountPath + ' unmounted')
-      }
-      // continue in callback, in order to keep order of tasks. Otherwise, some tasks will be performed earlier than other.
+  // get all fuse mount points of this container in order to unmount them
+  unmountAllFuse (name, function () {
+      // continue in unnamed callback, in order to keep order of tasks. Otherwise, some tasks will be performed earlier than other.
       // for example, first we should unmount filesystem, and then remove lxc device from container, and not vise versa.
 
       // there are few libraries to manage lxc directly from node.js, but they do not allow to configure containers
@@ -528,34 +686,10 @@ app.delete('/container', function (req, res) {
           console.log(`gpio disk was removed from ${name}`);
         }
         
-        // continue in callback, in order to keep order of tasks. There are few more iterations
-        exec(`lxc config device remove ${name} devices disk`,(error, stdout, stderr) => {
-          if (error) {
-            console.error(`An error has occured during disk removal from ${name}: ${error}`);
-          } else {
-            console.log(`disk was removed from ${name}`);
-          }
-          
           //recursively remove gpoi_mnt folder. There is no method in fs to recursively remove, therefore using deleteFolderRecursice function
-          var path = "/gpio_mnt/" + name;
-          console.log(`removing ${path} folder...`);
+          console.log(`removing /gpio_mnt/${name} folder...`);
 
-          var deleteFolderRecursive = function(path) {
-            if( fs.existsSync(path) ) {
-              fs.readdirSync(path).forEach(function(file,index){
-              var curPath = path + "/" + file;
-              if(fs.lstatSync(curPath).isDirectory()) { // recurse
-                deleteFolderRecursive(curPath);
-              } else { // delete file
-                fs.unlinkSync(curPath);
-                console.log(curPath + " deleted");
-              }
-            });
-            fs.rmdirSync(path);
-            console.log(path + " deleted");
-            }
-          };
-
+          deleteFolderRecursive (`/gpio_mnt/${name}`);
           //remove container by bash
           console.log("Removing container...");
           exec(`lxc delete --force ${name}`,(error, stdout, stderr) => {
@@ -565,9 +699,8 @@ app.delete('/container', function (req, res) {
               console.log(`${name} was removed`);
             }
           });
-        });
+        //});
       });    
-    });
   });
   // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "invoked"
   // answer comes immediately after receving API call 
@@ -589,27 +722,16 @@ client.containers(function(err, containers) {
       output = (execSync('lxc exec ' + name + ' -- cat /etc/group')).toString();
       gid = parseInt(output.match(/gpio:x:([0-9]+):.*/i)[1]) + parseInt(uid);
       console.log ("GID: ", gid);
-
-      // using fuse.unmount(), which actually removes FUSE mounting
-      fuse.unmount(`/gpio_mnt/${name}/sys/class/gpio`, function (err) {
-        // this is callback function, which handles errors
-        if (err) {
-          console.error(`filesystem at /gpio_mnt/${name}/sys/class/gpio not unmounted due to error: ${err}`);
-        } else {
-          console.log(`filesystem at /gpio_mnt/${name}/sys/class/gpio has been unmounted`);
+      //calling function that was defined earlier
+      folderRemount(`/sys/class/gpio`,name,uid,gid);
+      //look for exported pins and remount their folders
+      if (fs.existsSync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio`)){
+        pinfolders = fs.readdirSync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio`);
+        for (var j = 0; i < pinfolders.length; i++) {
+          console.log (pinfolders[i]);
+          folderRemount(`/sys/devices/platform/soc/3f200000.gpio/gpio/${pinfolders[i]}`,name,uid,gid);
         }
-        folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-      });
-      // using fuse.unmount(), which actually removes FUSE mounting
-      fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, function (err) {
-        // this is callback function, which handles errors<
-        if (err) {
-          console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio not unmounted due to error: ${err}`);
-        } else {
-          console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio has been unmounted`);
-        }
-        folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-      });
+      }
     }
   }
 });
