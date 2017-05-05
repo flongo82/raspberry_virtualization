@@ -26,6 +26,19 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }))
 // specifying port number on which application will be listening
 var port = 8000;
+
+var type = (function(global) {
+    var cache = {};
+    return function(obj) {
+        var key;
+        return obj === null ? 'null' // null
+            : obj === global ? 'global' // window in browser or global in nodejs
+            : (key = typeof obj) !== 'object' ? key // basic: string, boolean, number, undefined, function
+            : obj.nodeType ? 'object' // DOM element
+            : cache[key = ({}).toString.call(obj)] // cached. date, regexp, error, object, array, math
+            || (cache[key] = key.slice(8, -1).toLowerCase()); // get XXXX from [object XXXX], and cache it
+    };
+}(this));
 // this function is desired to simplify remounts during server initialization
 function folderRemount (folder, name, uid, gid) {
   fuse.unmount(`/gpio_mnt/${name}${folder}`, function (err) {
@@ -38,6 +51,13 @@ function folderRemount (folder, name, uid, gid) {
     folderMirroring (folder, `/gpio_mnt/${name}${folder}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
   });
 }
+
+var findOne = function (haystack, arr) {
+    return arr.some(function (v) {
+        return haystack.indexOf(v) >= 0;
+    });
+};
+
 
 // this function will be used later to unmount all fuse mount points of container
 function unmountAllFuse (name, callback) {
@@ -64,6 +84,7 @@ function unmountAllFuse (name, callback) {
     }
   });
 }
+
 
 // this function will be used later to recursively remove folder
 function deleteFolderRecursive (path) {
@@ -139,8 +160,28 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
                 cb(fuse[err.code]);
             }
             else{
-                console.log('files: ', files);
-                cb(null,files);
+                if ((original_folder + path) == "/sys/class/gpio/") {
+                    //get container name from the path
+                    name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
+                    console.log('files: ', files);
+                    exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio"`,  (error, stdout, stderr) => {
+		      reg = /\/gpio_mnt\/.*\/sys\/devices\/platform\/soc\/3f200000.gpio\/gpio\/(gpio(\d)+)\s/g;
+		      var pins = [];
+                      while ((match = reg.exec(stdout)) !== null) {
+			pins.push(match[1]);
+		      }
+                      for(var k = files.length - 1; k >= 0; k--) {
+                        console.log(files[k]);
+                        if (!(findOne(files[k],pins)) && !(files[k] == 'unexport' || files[k] == 'export')) {
+                          console.log(`removed ${files[k]} from output`)
+                          files.splice(k, 1);
+                        }
+                      }
+                      cb(null,files);
+                    });
+                } else {
+                    cb(null,files);
+                }
             }
         });                
     }
@@ -572,6 +613,28 @@ app.post('/container', function (req, res)  {
           console.error(`An error has occured while adding gpio group: ${error}`);
         } else { console.log (`Added gpio group in ${name} container `);
         }
+/*
+        var addUserToGroup = function (){  
+          fs.readFile(`/var/lib/lxd/containers/${name}/rootfs/etc/group`, 'utf8', function(err, contents) {
+            setTimeout(function(){
+              if (content.match(/.*:.*:.*:ubuntu/i)){
+                exec(`lxc exec ${name} -- usermod -a -G gpio ubuntu`, (error, stdout, stderr) => {
+                  if (error) {
+                    console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
+                    return;
+                  } else {
+                    console.log (`Added ubuntu user to gpio group in ${name} container `);
+                    return;
+                  }
+                });
+              } else {
+                addUserToGroup();            
+              }
+            }, 1000);
+          }); 
+        }
+        addUserToGroup();*/
+
         setTimeout(function (){ 
           // without sleeping, it keeps failing with error: ubuntu user does not exist. 
           // This is due to the fact that the cloud-init script that creates the ubuntu user has not finished yet when you try to add the ubuntu user to the gpio group.
@@ -638,17 +701,7 @@ app.post('/container', function (req, res)  {
 		    } else {
                       console.log (`Mounted /gpio_mnt/sys/class/gpio folder in ${name} container`);
 		    } 
-                    // mapping parent's folders to appropriate container's folders
-		    //exec(`lxc config device add ${name} devices disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio`, (error, stdout, stderr) => {
-		      //if (error) {
-                      //  console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container: ${error}`);
-		      //} else {
-                      //  console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio folder in ${name} container`);
-		      //}
-                      // calling functions to reflect changes between parent and container's folders using FUSE
-		      //folderMirroring (`/sys/devices/platform/soc/3f200000.gpio`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
 		    folderMirroring (`/sys/class/gpio`, `/gpio_mnt/${name}/sys/class/gpio`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-		    //});
                   });
 		});
               });
