@@ -10,7 +10,7 @@ We assume that server.js script is located in /home/ubuntu/raspberry_virtualizat
 
 ```
 cd /home/ubuntu/raspberry_virtualization
-npm install nodemon express body-parser ps-node linux-mountutils mkdirp node-lxd wrench gpio
+npm install nodemon express body-parser ps-node linux-mountutils mkdirp node-lxd wrench gpio jsonfile
 
 ```
 
@@ -31,9 +31,21 @@ sudo node /path/to/script/server.js
 
 ### Working with API
 
-Server listens on 8000 by default. It accepts POST and DELETE methods at /container path and waits for x-www-form-urlencode json message in the following format:
+Server listens on 8000 by default. It accepts POST and DELETE methods at /container path and waits for application/json message in the following format:
 ```
-{ name: 'containername' }
+{  
+   "name":"test2", //name of containter
+   "gpiomapping":[  //gpio pins mapping section. Non-mentioned here pins are faked
+      {  
+         "physical":"1", 
+         "virtual":"1"
+      },
+      {  
+         "physical":"4",
+         "virtual":"6"
+      }
+   ]
+}
 ```
 for example:
 { name: 'test1' }

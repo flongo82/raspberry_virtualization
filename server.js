@@ -20,6 +20,7 @@ var wrench = require('wrench'),
 var lxd = require("node-lxd");
 var client = lxd();
 var gpio = require("gpio");
+var jsonfile = require('jsonfile')
 // using bodyParster.json in order to parse JSON strings
 app.use(bodyParser.json());
 // using bodyParser.urlenconded - without it express module won't be able to understand x-www-form-urlencoded
@@ -48,6 +49,7 @@ function folderRemount (folder, name, uid, gid) {
     } else {
       console.log(`filesystem at /gpio_mnt/${name}${folder} has been unmounted`);
     }
+    
     folderMirroring (folder, `/gpio_mnt/${name}${folder}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
   });
 }
@@ -58,6 +60,22 @@ var findOne = function (haystack, arr) {
     });
 };
 
+// this function is used to filter array
+function customFilter(values) {
+   return function(r) {
+      var keys = Object.keys( values );
+      var answer = true;
+
+      for( var i = 0, len = keys.length; i < len; i++) {
+          if( r[keys[i]] !== values[keys[i]] ) {
+              answer = false;
+              break;
+          }
+      }
+
+      return answer;
+   }
+}
 
 // this function will be used later to unmount all fuse mount points of container
 function unmountAllFuse (name, callback) {
@@ -115,7 +133,42 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
 
     var getattr_function = function(path, cb){
         console.log('getattr(%s)',path);
-        fs.lstat(pt.join(original_folder, path), function(err, stats){
+        // if trying to get attributes of /sys/class/gpio/gpiox
+        if (original_folder == "/sys/class/gpio" && /\/gpio\d{1,2}/i.test(path) ) {
+          //get container name from the path
+          name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
+          // getting json file with pin mapping rules
+          virtualpin = (path.match(/\/gpio(\d{1,2})/i))[1]
+          fs.readFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`, function (err, contents) {
+          // if file was not read, do not continue
+            if (err) {
+              console.log(`An error has occured during ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file reading.`);
+            } else {
+              // find if pin has any rule.
+              rules = JSON.parse(contents);
+              // getting rule for this virtual pin
+              filteredrules = rules.filter (function(o){
+                return (o.virtual === virtualpin);
+              });
+              // if found the rule, change the path to appropriate one
+              if (filteredrules.length == 1) {
+                path = `/gpio${filteredrules[0].physical}`
+              }
+              // return the attributes
+              fs.lstat(pt.join(original_folder, path), function(err, stats){
+                if(err){
+                  //console.log('error: ', err);
+                  cb(fuse[err.code]);
+                }
+                else{
+                  console.log(`getting ${path} attributes`)
+                  cb(null,stats);
+                }
+              });
+            }
+          });
+        } else {
+          fs.lstat(pt.join(original_folder, path), function(err, stats){
             if(err){
                 //console.log('error: ', err);                
                 cb(fuse[err.code]);
@@ -123,7 +176,8 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
             else{
                 cb(null,stats);
             }
-        });
+          });
+        }
     }
     
     var access_function = function(path, mode, cb){
@@ -141,7 +195,43 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
     
     var readlink_function = function(path, cb){
         console.log('readlink(%s)', path);
-        fs.readlink(pt.join(original_folder, path), function(err, linkString){
+        // if trying to get attributes of /sys/class/gpio/gpiox
+        if (original_folder == "/sys/class/gpio" && /\/gpio\d{1,2}/i.test(path) ) {
+          //get container name from the path
+          name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
+          // getting json file with pin mapping rules
+          virtualpin = (path.match(/\/gpio(\d{1,2})/i))[1]
+          fs.readFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`, function (err, contents) {
+          // if file was not read, do not continue
+            if (err) {
+              console.log(`An error has occured during ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file reading.`);
+            } else {
+              // find if pin has any rule.
+              rules = JSON.parse(contents);
+              // filter rules of this virtual folder
+              filteredrules = rules.filter (function(o){
+                return (o.virtual === virtualpin);
+              });
+              // if found the rule, then change the path to appropriate
+              if (filteredrules.length == 1) {
+                path = `/gpio${filteredrules[0].physical}`
+              }
+              // return the link
+              fs.readlink(pt.join(original_folder, path), function(err, linkString){
+                if(err){
+                  //console.log('error: ', err);
+                  cb(fuse[err.code]);
+                }
+                else{
+                  modifiedLinkString = linkString.replace(/\/gpio\d{1,2}/i,`/gpio${virtualpin}`);
+                  console.log(`getting ${path} link: ${modifiedLinkString}`)
+                  cb(null, modifiedLinkString);
+                }
+              });
+            }
+          });
+        } else {
+          fs.readlink(pt.join(original_folder, path), function(err, linkString){
             if(err){
                 //console.log('error: ', err);
                 cb(fuse[err.code]);
@@ -149,7 +239,8 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
             else{
                 cb(null, linkString);
             }
-        });        
+          });  
+        }      
     }
     
     var readdir_function = function(path, cb){
@@ -160,24 +251,60 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
                 cb(fuse[err.code]);
             }
             else{
+                // if trying to list /sys/class/gpio contents
                 if ((original_folder + path) == "/sys/class/gpio/") {
                     //get container name from the path
                     name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
                     console.log('files: ', files);
-                    exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio"`,  (error, stdout, stderr) => {
-		      reg = /\/gpio_mnt\/.*\/sys\/devices\/platform\/soc\/3f200000.gpio\/gpio\/(gpio(\d)+)\s/g;
-		      var pins = [];
-                      while ((match = reg.exec(stdout)) !== null) {
-			pins.push(match[1]);
-		      }
-                      for(var k = files.length - 1; k >= 0; k--) {
-                        console.log(files[k]);
-                        if (!(findOne(files[k],pins)) && !(files[k] == 'unexport' || files[k] == 'export')) {
-                          console.log(`removed ${files[k]} from output`)
-                          files.splice(k, 1);
-                        }
+                    // getting json file with pin mapping rules
+                    fs.readFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`, function (err, contents) {
+                      // if file was not read, do not continue
+                      if (err) {
+                        console.log(`An error has occured during ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file reading.`);
+                      } else {
+                        // find if pin has any rule.
+                        rules = JSON.parse(contents);
+                       
+                        // look for current fuse mounts 
+                        exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio"`,  (error, stdout, stderr) => {
+	    	          reg = /\/gpio_mnt\/.*\/sys\/devices\/platform\/soc\/3f200000.gpio\/gpio\/gpio((\d)+)\s/g;
+		          var pins = [];
+                          // do regex on list on mount points in order to get pin folders, and add all them to pins variable
+                          while ((match = reg.exec(stdout)) !== null) {
+                            // find if there are rules for this pin
+                            filteredrules = rules.filter (function(o){
+                              return (o.virtual === match[1].toString());
+                            });
+                            // if found the rule, then add physical physical folder. If not - just put one-to-one 
+                            if (filteredrules.length == 1) {
+                              pins.push([filteredrules[0].physical,filteredrules[0].virtual]);
+                            } else {
+                              pins.push([match[1], match[1]]);
+                            }
+		          }
+                          //iterate through all files in /sys/class/gpio
+                          for(var k = files.length - 1; k >= 0; k--) {
+                            console.log(files[k]);
+                            // get physical pins only from pins array
+                            physicalpins = pins.map(function(value,index) {return `gpio${value[0]}`});
+                            // if pin is exported or file is called "unexport" or "export", do not remove it from result. otherwise, remove
+                            if (!(findOne(files[k],physicalpins)) && !(files[k] == 'unexport' || files[k] == 'export')) {
+                              console.log(`removed ${files[k]} from output`)
+                              files.splice(k, 1);
+                            }
+                            // replace phyiscal pins by virtual ones in output
+                            if (findOne(files[k],physicalpins)){
+                               filteredrules = rules.filter (function(o){
+                                 return (o.physical === files[k].replace('gpio',''));
+                               });
+                               console.log (filteredrules)
+                               files[k] = `gpio${filteredrules[0].virtual}`
+                            }
+                          }
+                          //return list of files
+                          cb(null,files);
+                        });
                       }
-                      cb(null,files);
                     });
                 } else {
                     cb(null,files);
@@ -388,46 +515,82 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
             //get container name from the path
             name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
             console.log("Mirrored folder: " + mirror_folder);
-            // checking for input. If it's number from 0 to 100, go on  
-            if (inputstring >=0 && inputstring <= 100) {
-              // check if pin is already exported if not - do it
-              if (fs.existsSync(`/sys/class/gpio/gpio${inputstring}`)){
-                console.log (`Pin ${inputstring} is exported already. Skipping export of physical pin`);
-	      } else {
-                // if its not exported yet, export it
-                gpio.export(inputstring, {
-                  ready: function() {
-                  }
-                });
-              }
-              // create folder for pin
-              mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`,function (err) {
+            // checking for input. If it's number from 1 to 40, go on  
+            if (inputstring >= 1 && inputstring <= 40) {
+              // getting json file with pin mapping rules
+              fs.readFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`, function (err, contents) { 
+                // if file was not read, do not continue
                 if (err) {
-                  console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder: ${err.message}`);
+                  console.log(`An error has occured during ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file reading. Cannot continue with exporting.`);
                 } else {
-                  console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder successfully`);
-                }
-                // create folder for exported pin in container
-                exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
-                  if (error) {
-                    console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
-                  } else {
-                    console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
-                  }
-
-                  // create device to mount folder to container
-                  exec(`lxc config device add ${name} pin${inputstring} disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
-                    if (error) {
-                      console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpiogpio/gpio${inputstring} folder in ${name} container: ${error}`);
-                    } else {
-                      console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
-                    }
-                    // start mirroring using fuse
-                    folderMirroring (`/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
-                    //cb (null);
+                  // find if pin has any rule.
+                  rules = JSON.parse(contents);
+                  filteredrules = rules.filter (function(o){
+                    return (o.virtual === inputstring.toString());
                   });
-                });
-              });
+                  if (filteredrules.length == 1) {
+                    physicalpin = filteredrules[0].physical
+                  }
+                  // check if pin is already exported if not - do it
+                  if (fs.existsSync(`/sys/class/gpio/gpio${physicalpin}`)){
+                    console.log (`Pin ${physicalpin} is exported already. Skipping export of physical pin`);
+    	          } else {
+                    // if its not exported yet, export it
+                    gpio.export(physicalpin, {
+                      ready: function() {
+                      }
+                    });
+                  }
+                  // create folder for pin
+                  mkdirp(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`,function (err) {
+                    if (err) {
+                      console.error(`An error has occured while creating /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder: ${err.message}`);
+                    } else {
+                      console.log (`Created /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder successfully`);
+                    }
+                    // create folder for exported pin in container
+                    exec(`lxc exec ${name} -- mkdir -p /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                      if (error) {
+                        console.error(`An error has occured while creating /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                      } else {
+                        console.log (`Created /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                      }
+
+                      // create device to mount folder to container
+                      exec(`lxc config device add ${name} pin${inputstring} disk source=/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} path=/gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                        if (error) {
+                          console.error(`An error has occured while mounting /gpio_mnt/sys/devices/platform/soc/3f200000.gpiogpio/gpio${inputstring} folder in ${name} container: ${error}`);
+                        } else {
+                          console.log (`Mounted /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                        }
+                        // start mirroring using fuse
+                        folderMirroring (`/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${physicalpin}`, `/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, [`uid=${uid}`,`gid=${gid}`,`allow_other`]);
+                        // create array in order to add it no exported_pins.json
+                        exportobject = new Object()
+                        exportobject.name = name
+                        exportobject.physical = physicalpin
+                        exportobject.virtual = inputstring.toString()
+                        // read current state of exported_pins.json
+                        jsonfile.readFile(`${pt.dirname(require.main.filename)}/exported_pins.json`, function (err, obj) {
+                            if (err) {
+                              console.log (`Could not read exported_pin.json ${err}`)
+                              jsonfile.writeFile(`${pt.dirname(require.main.filename)}/exported_pins.json`, exportobject, function (err) {
+                                console.error(err)
+                              });
+                            // write new version of exported_pins.json with currently exported pin
+                            } else {
+                              obj.push (exportobject);
+                              jsonfile.writeFile(`${pt.dirname(require.main.filename)}/exported_pins.json`, obj, function (err) {
+                                console.error(err)
+                              });
+                           }
+                        });
+                        //cb (null);
+                      });
+                    });
+                  });
+                }
+              });  
             // if user tries to put something wrong to export folder
             } else { 
                console.log('user tried to perform unexpected action');
@@ -443,56 +606,92 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
           name = mirror_folder.match(/\/gpio_mnt\/(.*)\/sys\/class\/gpio/i)[1];
           console.log("Mirrored folder: " + mirror_folder);
           // checking for input. If it's number from 0 to 100, go on
-          if (inputstring >=0 && inputstring <= 100) {
-            // check if pin exported to this container or not
-            exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} type fuse"`, (error, stdout, stderr) => {
-              if (error) {
-                // if not exported to this container - do not proceed
-                console.error(`pin ${inputstring} is not exported to ${name} container yet. Cannot proceed with unexporting`);
+          if (inputstring >= 1 && inputstring <= 40) {
+            // getting json file with pin mapping rules
+            fs.readFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`, function (err, contents) {
+              // if file was not read, do not continue
+              if (err) {
+                console.log(`An error has occured during ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file reading. Cannot continue with exporting.`);
               } else {
-                // proceed this unexporting if exported to this container
-                console.log (`Unexporting pin ${inputstring}...`);
+                // find if pin has any rule.
+                rules = JSON.parse(contents);
+                filteredrules = rules.filter (function(o){
+                  return (o.virtual === inputstring.toString());
+                });
+                if (filteredrules.length == 1) {
+                  physicalpin = filteredrules[0].physical
+                }
 
-                fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, function (err) {
-                  // this is callback function, which handles errors
-                  if (err) {
-                    console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} not unmounted due to error: ${err}`);
+                // check if pin exported to this container or not
+                exec(`mount | grep "/dev/fuse on /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} type fuse"`, (error, stdout, stderr) => {
+                  if (error) {
+                  // if not exported to this container - do not proceed
+                    console.error(`pin ${inputstring} is not exported to ${name} container yet. Cannot proceed with unexporting`);
                   } else {
-                    console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} has been unmounted`);
-                  }
-                  // try removing device from container
-                  exec(`lxc config device remove ${name} pin${inputstring}`,(error, stdout, stderr) => {
-                    if (error) {
-                      console.error(`An error has occured while removing pin${inputstring} device in ${name} container: ${error}`);
-                    } else {
-                      console.log (`Removed ${inputstring} device from ${name} container`);
-                    }
-                    // remove folder from container
-                    exec(`lxc exec ${name} -- rm -R /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
-                      if (error) {
-                        console.error(`An error has occured while removing /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                    // proceed this unexporting if exported to this container
+                    console.log (`Unexporting pin ${inputstring}...`);
+
+                    fuse.unmount(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, function (err) {
+                      // this is callback function, which handles errors
+                      if (err) {
+                        console.error(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} not unmounted due to error: ${err}`);
                       } else {
-                        console.log (`removed /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                        console.log(`filesystem at /gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} has been unmounted`);
                       }
-                      // remove folder from physical raspberry
-                      deleteFolderRecursive (`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`);
-                      //find if any container has mounted this pin
-                      glob('/gpio_mnt/*/sys/devices/platform/soc/3f200000.gpio/gpio/gpio'+inputstring, function(err,files){
-                        //if no containers this this pin, proceed this unexporting it from physical rasp
-                        if(files.length == 0){
-                          // unexport pin
-                          gpio.unexport(inputstring, {
-                            ready: function() {
-                              console.log(`unexported pin ${inputstring}`)
-                              //cb (2);
-                            }
-                          });
+                      // try removing device from container
+                      exec(`lxc config device remove ${name} pin${inputstring}`,(error, stdout, stderr) => {
+                        if (error) {
+                          console.error(`An error has occured while removing pin${inputstring} device in ${name} container: ${error}`);
+                        } else {
+                          console.log (`Removed ${inputstring} device from ${name} container`);
                         }
+                        // remove folder from container
+                        exec(`lxc exec ${name} -- rm -R /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`, (error, stdout, stderr) => {
+                          if (error) {
+                            console.error(`An error has occured while removing /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} container`);
+                          } else {
+                            console.log (`removed /gpio_mnt/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring} folder in ${name} contaier`);
+                          }
+                          // remove folder from physical raspberry
+                          deleteFolderRecursive (`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio/gpio${inputstring}`);
+                          //find if any container has mounted this pin
+                          jsonfile.readFile(`${pt.dirname(require.main.filename)}/exported_pins.json`, function (err, obj) {
+                            if (!err) {
+                              console.log (obj)
+                              // remove from list of exported pins the one which was unexported currently
+                              for(var k = obj.length - 1; k >= 0; k--) {
+                                if (obj[k].name == name && obj[k].virtual == inputstring.toString()){
+                                  physicalpin = obj[k].physical;
+                                  obj.splice(k, 1);
+                                }
+                              }
+                              // write to file last removal
+                              jsonfile.writeFileSync(`${pt.dirname(require.main.filename)}/exported_pins.json`, obj);
+                              if (obj){
+                                filteredpins = obj.filter (function(o){
+                                  return (o.physical === physicalpin);
+                                });
+                              }
+                              if (!(filteredpins.length >= 1)) {
+                                //if no containers this this pin, proceed this unexporting it from physical rasp
+                                // unexport pin
+                                gpio.unexport(physicalpin, {
+                                  ready: function() {
+                                    console.log(`unexported pin ${physicalpin}`)
+                                   //cb (2);
+                                  }
+                                });
+                              }
+                            } else { 
+                              console.log(`could not read pins mapping file ${err}`)
+                            } 
+                          });
+                        });
                       });
                     });
-                  });
+                  }
                 });
-              }
+              } 
             });
           }
         } else {
@@ -533,7 +732,7 @@ function folderMirroring (original_folder, mirror_folder, fuse_options) {
                 cb(fuse[err.code]);
             }
             else{
-                console.log('stats: ', stats);
+                //console.log('stats: ', stats);
                 cb(null,stats);
             }
         });
@@ -590,6 +789,25 @@ app.post('/container', function (req, res)  {
   name = req.body.name;
   // All console.log lines are added in debugging purposes
   console.log ("Request body: ", req.body);
+  if (!(name == undefined)) {
+  //check whether gpiomapping section exists in the request and process it if yes
+  if (req.body.gpiomapping) {
+    // check if pin mapping file exists for container. If yes - don't perform any actions
+    if (!fs.existsSync(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`)) {
+      fs.writeFile(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`,JSON.stringify(req.body.gpiomapping),function(err){
+        if(err) {
+           throw err;
+        } else {
+           console.log (`GPIO mapping was saved to ping_mapping_${name}.json file`)
+           console.log (req.body.gpiomapping)
+        }
+      })
+    } else {
+      console.log (`${name}.json already exsists! Possibly, containter is running already`)
+    }
+  } else {
+    console.log (`GPIO mapping does not exist in request.`)
+  }
   console.log(`Launching ${name} container...`);
 
   // there are few libraries to manage lxc directly from node.js, but they do not allow to configure containers
@@ -613,27 +831,6 @@ app.post('/container', function (req, res)  {
           console.error(`An error has occured while adding gpio group: ${error}`);
         } else { console.log (`Added gpio group in ${name} container `);
         }
-/*
-        var addUserToGroup = function (){  
-          fs.readFile(`/var/lib/lxd/containers/${name}/rootfs/etc/group`, 'utf8', function(err, contents) {
-            setTimeout(function(){
-              if (content.match(/.*:.*:.*:ubuntu/i)){
-                exec(`lxc exec ${name} -- usermod -a -G gpio ubuntu`, (error, stdout, stderr) => {
-                  if (error) {
-                    console.error(`An error has occured while adding ubuntu user to gpio group: ${error}`);
-                    return;
-                  } else {
-                    console.log (`Added ubuntu user to gpio group in ${name} container `);
-                    return;
-                  }
-                });
-              } else {
-                addUserToGroup();            
-              }
-            }, 1000);
-          }); 
-        }
-        addUserToGroup();*/
 
         setTimeout(function (){ 
           // without sleeping, it keeps failing with error: ubuntu user does not exist. 
@@ -711,6 +908,7 @@ app.post('/container', function (req, res)  {
       });
     }
   });
+  }
   // respond to client. Currenlty no logic, which tracks actual state of all pin mapping processes. Therefore, always answer "invoked"
   res.send(`invoked`);
 });
@@ -751,6 +949,12 @@ app.delete('/container', function (req, res) {
             } else {
               console.log(`${name} was removed`);
             }
+            // check if there is pin_mapping file for this containter. If exist - remove it
+            if (fs.existsSync(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`)) {
+              console.log (`removing ${pt.dirname(require.main.filename)}/pin_mapping_${name}.json file...`)
+              fs.unlinkSync(`${pt.dirname(require.main.filename)}/pin_mapping_${name}.json`)
+            }
+   
           });
         //});
       });    
@@ -779,15 +983,40 @@ client.containers(function(err, containers) {
       folderRemount(`/sys/class/gpio`,name,uid,gid);
       //look for exported pins and remount their folders
       if (fs.existsSync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio`)){
-        pinfolders = fs.readdirSync(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio`);
-        for (var j = 0; i < pinfolders.length; i++) {
-          console.log (pinfolders[i]);
-          folderRemount(`/sys/devices/platform/soc/3f200000.gpio/gpio/${pinfolders[i]}`,name,uid,gid);
-        }
+        fs.readdir(`/gpio_mnt/${name}/sys/devices/platform/soc/3f200000.gpio/gpio`, function (err, pinfolders) {
+          if (pinfolders.length) {
+            for (var j = 0; j < pinfolders.length; j++) {
+              console.log (pinfolders[j]);
+              folderRemount(`/sys/devices/platform/soc/3f200000.gpio/gpio/${pinfolders[j]}`,name,uid,gid);
+            }
+          }
+        });
       }
     }
   }
 });
+
+// check pin_mapping_name.json files to find the ones which should not exist
+glob(`${pt.dirname(require.main.filename)}/pin_mapping_*.json`, function(err,files) {
+  //if any file exists
+  if(files.length){
+    //iterate through the array of files
+    for (var j = 0; j < files.length; j++) {
+      file_path = files [j];
+      //get container name from path
+      container_name = (files[j].match(/\/pin_mapping_(.*)\.json/i))[1]
+      //get containter with appropriate name
+      client.container(container_name, function(err, container) {
+        // if containter is not in running state or it does not exist, remove the file
+        if (!(container._metadata.status == 'Running')) {
+          console.log (`Removing ${file_path} file...`);
+          fs.unlinkSync(file_path)
+        }
+      })
+    }
+  }
+});
+
 
 // app.listen is used to launch web server for API requests listening
 app.listen(port, () => {
