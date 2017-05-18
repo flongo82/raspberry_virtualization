@@ -15,6 +15,10 @@ npm install nodemon express body-parser ps-node linux-mountutils mkdirp node-lxd
 ```
 
 ## Usage
+### Before launching
+
+Create symlink linkforemulation, linking to anywhere, in the script folder. This is for faked pins to work correctly
+
 ### How to launch
 In order to run script in development mode, move to script folder and run
 
