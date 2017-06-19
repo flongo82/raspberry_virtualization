@@ -1,0 +1,16 @@
+[
+{"file": "active_low", "defaultvalue": "0", "allowedvalues": []},
+{"file": "direction", "defaultvalue": "out", "allowedvalues": []},
+{"file": "uevent", "defaultvalue": "", "allowedvalues": []},
+{"file": "edge", "defaultvalue": "none", "allowedvalues": []},
+{"file": "value", "defaultvalue": "0", "allowedvalues": []},
+{"file": "power/async", "defaultvalue": "disabled", "allowedvalues": []},
+{"file": "power/autosuspend_delay_ms", "defaultvalue": "", "allowedvalues": []},
+{"file": "power/control", "defaultvalue": "auto", "allowedvalues": []},
+{"file": "power/runtime_active_kids", "defaultvalue": "0", "allowedvalues": []},
+{"file": "power/runtime_active_time", "defaultvalue": "0", "allowedvalues": []},
+{"file": "power/runtime_enabled", "defaultvalue": "disabled", "allowedvalues": []},
+{"file": "power/runtime_status", "defaultvalue": "unsupported", "allowedvalues": []},
+{"file": "power/runtime_suspended_time", "defaultvalue": "0", "allowedvalues": []},
+{"file": "power/runtime_usage", "defaultvalue": "0", "allowedvalues": []}
+]
